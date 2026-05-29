@@ -1,0 +1,17 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`com.portfolio.modulith.order`
+|Spring components
+|_Services_
+
+* `c.p.m.o.OrderService`
+
+_Repositories_
+
+* `c.p.m.o.OrderRepository`
+|Bean references
+|* `c.p.m.i.InventoryService` (in Inventory)
+|Aggregate roots
+|* `c.p.m.o.Order`
+|===

@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: ecom-modulith
+  datasource:
+    url: jdbc:mysql://localhost:3306/portfolio_modulith?createDatabaseIfNotExist=true
+    username: root
+    password: root
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true

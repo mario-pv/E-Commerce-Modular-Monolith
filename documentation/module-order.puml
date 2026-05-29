@@ -1,0 +1,18 @@
+@startuml
+title Order
+
+top to bottom direction
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4.puml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+Container_Boundary("ModulithApplication.ModulithApplication_boundary", "ModulithApplication", $tags="") {
+  Component(ModulithApplication.ModulithApplication.Inventory, "Inventory", "Module", "", $tags="")
+  Component(ModulithApplication.ModulithApplication.Order, "Order", "Module", "", $tags="")
+}
+
+Rel_D(ModulithApplication.ModulithApplication.Order, ModulithApplication.ModulithApplication.Inventory, "uses", $tags="")
+
+SHOW_LEGEND(true)
+@enduml

@@ -1,0 +1,15 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`com.portfolio.modulith.inventory`
+|Spring components
+|_Services_
+
+* `c.p.m.i.InventoryService`
+
+_Repositories_
+
+* `c.p.m.i.StockRepository`
+|Aggregate roots
+|* `c.p.m.i.Stock`
+|===

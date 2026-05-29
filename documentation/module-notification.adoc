@@ -1,0 +1,11 @@
+[%autowidth.stretch, cols="h,a"]
+|===
+|Base package
+|`com.portfolio.modulith.notification`
+|Spring components
+|_Event listeners_
+
+* `c.p.m.n.NotificationListener` listening to `c.p.m.o.OrderCreatedEvent`
+|Events listened to
+|* `c.p.m.o.OrderCreatedEvent`
+|===
