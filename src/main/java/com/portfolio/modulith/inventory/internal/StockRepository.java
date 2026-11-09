@@ -1,4 +1,4 @@
-package com.portfolio.modulith.inventory;
+package com.portfolio.modulith.inventory.internal;
 
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.QueryHint;

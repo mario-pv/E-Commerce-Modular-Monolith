@@ -1,0 +1,50 @@
+name: e-commerce-modular-monolith
+
+services:
+  app:
+    build: .
+    image: ecom-modulith:local
+    container_name: modulith-app
+    restart: "no"
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/ecommerce_db?createDatabaseIfNotExist=true
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+      SERVER_SHUTDOWN: graceful
+      SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: 15s
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "4", "http://localhost:8080/api/inventory"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 20s
+
+  mysql:
+    image: mysql:8.0
+    container_name: modulith-mysql
+    restart: "no"
+    environment:
+      MYSQL_DATABASE: ecommerce_db
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 20
+    stop_grace_period: 30s
+
+volumes:
+  mysql-data:
+    name: modulith-mysql-data

@@ -1,0 +1,4 @@
+* text=auto
+src/main/resources/static/index.html text eol=lf -whitespace
+/mvnw text eol=lf
+*.cmd text eol=crlf

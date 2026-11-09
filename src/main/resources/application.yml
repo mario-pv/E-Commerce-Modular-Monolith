@@ -1,11 +1,23 @@
 spring:
+  jackson:
+    deserialization:
+      accept-float-as-int: false
+  docker:
+    compose:
+      # Start Docker services explicitly; an IDE run must not launch a second app.
+      enabled: false
   application:
     name: ecom-modulith
   datasource:
-    url: jdbc:mysql://localhost:3306/portfolio_modulith?createDatabaseIfNotExist=true
-    username: root
-    password: root
+    url: ${DB_URL:jdbc:mysql://localhost:3306/ecommerce_db?createDatabaseIfNotExist=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+  flyway:
+    # Adoption of a pre-Flyway database requires the explicit local-db-upgrade profile.
+    baseline-on-migrate: false
+    clean-disabled: true
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
