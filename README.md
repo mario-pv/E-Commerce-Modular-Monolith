@@ -1,86 +1,81 @@
 # E-Commerce Modular Monolith
 
-[![Verify](https://github.com/mario-pv/E-Commerce-Modular-Monolith/actions/workflows/verify.yml/badge.svg)](https://github.com/mario-pv/E-Commerce-Modular-Monolith/actions/workflows/verify.yml)
+I built this project to explore how a well-structured modular monolith handles the kind of backend problems that usually push teams toward microservices too early: flash-sale stock contention, atomic multi-item checkouts, and asynchronous post-purchase events.
 
-A local portfolio demo of transactional checkout, stock concurrency, and asynchronous events, built with Java 21, Spring Boot, Spring Modulith, MySQL, and React.
+The storefront itself is intentionally compact so the focus stays on what happens under the hood when ten buyers try to grab the last few units of a GPU at the exact same time, or when one item in a multi-item cart fails mid-checkout.
 
-Dependency baseline: Spring Boot **4.1.2**, Spring Modulith **2.1.2**, and Boot-managed Testcontainers. Flyway manages versioned MySQL schema changes; Hibernate validates the schema rather than changing it implicitly.
+## Tech Stack
 
-The storefront is deliberately small. The interesting part is what happens when several buyers try to purchase the same stock, or one item in a cart cannot be fulfilled.
+| Layer | Technologies |
+| :--- | :--- |
+| **Backend** | Java 21, Spring Boot 4.1.2, Spring Modulith 2.1.2, Spring Data JPA |
+| **Database & Migrations** | MySQL 8.0, Flyway (versioned schema migrations with Hibernate `validate`) |
+| **Frontend** | React 18, Vite, Tailwind CSS, Lucide Icons |
+| **Testing & CI** | JUnit 5, Testcontainers (MySQL), Maven Failsafe, Vitest, React Testing Library, GitHub Actions |
 
-## What works
+## Architecture & Key Engineering Decisions
 
-- Browse the backend's demo catalog, search/filter products, and manage a cart.
-- Check out the entire cart in one transaction: a failed item rolls back all stock deductions, orders, and event publications from that checkout.
-- Run ten concurrent purchase requests with pessimistic or optimistic locking and inspect actual successes/failures.
-- Reset demo stock to its starting quantities without deleting order history.
-- Browse persisted orders with bounded, newest-first pagination and view recent simulated notification activity.
-- Reject blank product codes, zero/negative or fractional purchase quantities, and insufficient stock with useful API errors.
+Instead of splitting `order`, `inventory`, and `notification` into separate deployables with network overhead, this app runs as a single Spring Boot deployment with strict package and module boundaries enforced by **Spring Modulith**:
 
-Notifications are simulated; no email is sent. Offline mode is catalog preview only, not a simulated database or a successful purchase.
+- **Encapsulated Module Boundaries:** `OrderService` communicates synchronously with `InventoryService` for stock deductions, while JPA entities (`Stock`) and repositories (`StockRepository`) are tucked inside `inventory.internal`. External modules only ever see immutable `StockView` records, and `ModulithArchitectureTest` fails the build if another module tries to reach into internal persistence classes or introduce circular dependencies.
+- **Pessimistic vs. Optimistic Concurrency Control:** High-contention flash sales and regular checkouts have different failure profiles. The backend supports both **Pessimistic Write Locking** (`SELECT ... FOR UPDATE` with a 3-second lock timeout to serialize competing deductions without retry storms) and **Optimistic Locking** (`@Version` on `Stock` to reject conflicting writes with a `409 Conflict`).
+- **Atomic Cart Checkout & Deadlock Prevention:** Checking out a cart runs inside a single `@Transactional` boundary. If any item lacks sufficient stock, every prior stock deduction, order row, and outbox event from that checkout rolls back cleanly. To prevent database deadlocks when two carts check out the same products in reverse order, cart items are canonically sorted by `productCode` before acquiring row locks.
+- **Transactional Outbox Notifications:** When an order commits, `OrderService` publishes an `OrderCreatedEvent`. Spring Modulith persists the event in the `event_publication` table within the same database transaction and dispatches it asynchronously after commit to `NotificationListener` (`@ApplicationModuleListener`), keeping slow notification work out of the checkout critical path.
+- **Bounded Slice Pagination:** Order history (`GET /api/orders`) uses Spring Data `Slice` ordered by descending ID rather than `Page`, fetching `size + 1` rows to populate `X-Page`, `X-Page-Size`, and `X-Has-More` headers without firing an expensive full-table `COUNT(*)` query on every poll.
+- **Production-Minded Schema Management:** Flyway manages all physical MySQL schema transitions (`V1__legacy_schema.sql` and `V2__modulith_publication_lifecycle.sql`), while Hibernate runs strictly in `ddl-auto: validate` mode.
 
-## Run locally
+## Try It Out (Interactive Demo Features)
 
-**Upgrading an existing demo database?** Read [the one-time database adoption steps](docs/database-migrations.md) before starting the upgraded app. Fresh databases work normally. An existing non-empty database without Flyway history is deliberately rejected until you explicitly adopt it; do not delete its volume to bypass this check.
+Once the app is running, you can test the backend behavior directly from the UI:
 
-### Docker Desktop: app and database together (recommended for reviewing)
+1. **Flash Rush Simulator:** Pick any in-stock item, choose **5, 10, or 20 concurrent HTTP requests**, and toggle between **Pessimistic** and **Optimistic** locking to compare how the database handles simultaneous buyers competing for limited inventory.
+2. **Atomic Cart Rollback:** Add two different products to your cart, or try purchasing more units than are currently in stock, to see how whole-cart validation and transactional rollback behave.
+3. **Observability Dashboard:** Switch to the **Observability** view to watch persisted orders (newest-first pagination) alongside the live after-commit notification feed updating every 2 seconds.
+4. **One-Click Inventory Reset:** Use **Restock demo inventory** at any time to reset catalog stock back to baseline quantities without wiping out your order history.
 
-Only Docker Desktop with Linux containers is required. The multi-stage Dockerfile builds the React frontend and Java 21 backend inside Docker, so it does not use an old host JAR.
+## Running Locally
 
-From the project root in PowerShell:
+### Option 1: Docker Compose (Recommended for a quick spin)
+
+All you need is Docker Desktop. The multi-stage `Dockerfile` compiles the React frontend and packages the Java 21 JAR inside the container, so you don't need Node or Maven installed on your host machine.
 
 ```powershell
+# Build and start both the Spring Boot app and MySQL 8.0
 docker compose up --build -d --wait
+
+# Check container health
 docker compose ps
 ```
 
-Open `http://localhost:8080`. In Docker Desktop, expand **e-commerce-modular-monolith** to see **modulith-app** and **modulith-mysql**, including health status and logs.
+Open `http://localhost:8080` in your browser.
 
 ```powershell
-# Stop the WHOLE project: app and database, without deleting data.
+# Stop the stack without losing database volume data
 docker compose stop
 
-# Start the existing containers again.
+# Start existing containers again
 docker compose start --wait
 
-# Rebuild and run after changing source code.
-docker compose up --build -d --wait
-
-# See stopped containers too, or follow the app's logs.
-docker compose ps -a
+# Follow application logs
 docker compose logs -f app
 ```
 
-In Docker Desktop, use Start/Stop on the **project/group row** to control both services. Stopping only the MySQL row does not automatically stop Java; the app then remains visible in its own row. `depends_on` waits for MySQL health during startup, not continuous lifecycle coupling. Stop the whole group when you want port 8080 to close. Ctrl+C while following logs stops the log viewer, not detached containers.
+*Note: MySQL data persists in the named `modulith-mysql-data` volume. Avoid running `docker compose down -v` unless you want to wipe the database.*
 
-Both services use `restart: "no"`; neither is configured to respawn automatically. Ports are bound to localhost. MySQL data is stored in the named volume `modulith-mysql-data`, which survives normal stop/start and `docker compose down`. **Do not use `docker compose down -v` unless you intend to delete the database.**
+### Option 2: Local Java (IntelliJ / Maven) + MySQL in Docker
 
-### IntelliJ or Maven: app on the host, database in Docker
-
-Use this mode for debugging Java. It needs JDK 21 and Maven (or the included wrapper). Do not run the Docker app and the IDE app together on port 8080.
+If you want to step through the Java code in a debugger, run MySQL in Docker and launch Spring Boot on your host (requires **JDK 21**):
 
 ```powershell
-# First stop any full-stack Docker run.
+# Stop the containerized app if it's running on port 8080, then start only MySQL
 docker compose stop
-# Start only MySQL.
 docker compose up -d --wait mysql
 
-java -version
-javac -version
-mvn -version
-# All three should select Java 21.
-mvn spring-boot:run
+# Run the backend (use ./mvnw on macOS/Linux or .\mvnw.cmd on Windows)
+./mvnw spring-boot:run
 ```
 
-Alternatively run `ModulithApplication` in IntelliJ. Use IntelliJ's red **Stop** button to stop that Java process, or Ctrl+C for a foreground Maven/JAR run. Docker does not own an IDE/terminal-launched Java process and cannot stop it. Spring's automatic Compose startup is disabled, so an IDE launch cannot silently start another app container.
-
-The Windows Maven wrapper can replace `mvn` with `.\mvnw.cmd`; on macOS/Linux use `./mvnw`.
-
-Host configuration defaults to MySQL on port 3306, database `ecommerce_db`, and `root`/`root`. Override `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` for a host run when needed. Container connection settings are in `compose.yaml`. All defaults are for local development only.
-
-### Frontend development
-
-With either backend mode running, use another terminal. This needs Node 22.12+, 24.x, or 26+ and npm; see `frontend/package.json` for the exact range.
+If you're working on the React UI (`frontend/`), open a second terminal (requires **Node 22.12+ / 24+**):
 
 ```powershell
 cd frontend
@@ -88,70 +83,36 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`; Vite proxies `/api` to port 8080. To publish frontend changes for a host Maven/JAR run:
+Vite runs at `http://localhost:5173` and proxies `/api` requests to `localhost:8080`. When you're ready to bundle the UI into Spring Boot's static assets (`src/main/resources/static`), run `npm run build` inside `frontend/`.
 
-```powershell
-npm run build
-```
+> **Upgrading an older local pre-Flyway database?** Fresh setups work automatically. If you have an existing non-empty volume from an earlier version of this repo without Flyway history, startup will intentionally halt to protect your data. Follow the one-time adoption steps in [docs/database-migrations.md](https://www.google.com/search?q=docs/database-migrations.md) using the `local-db-upgrade` profile.
 
-Restart/repackage a host backend as needed. For Docker, rebuild with `docker compose up --build -d --wait` instead; the Dockerfile builds and packages both frontend and backend from source.
+## Testing & Verification
 
-### Package a host JAR
+The test suite separates fast feedback from real database concurrency checks, and everything runs in GitHub Actions on every push and pull request:
 
-Build the frontend first if it changed, then run from the root with only MySQL running:
+- **Fast Unit, Controller & Architecture Tests (`./mvnw test`):** Uses H2 and MockMvc to test input validation, safe HTTP `400`/`409`/`500` error envelopes (`ApiExceptionHandler`), slice pagination query counts, and Spring Modulith package encapsulation (`ModulithArchitectureTest`).
+- **Real MySQL Concurrency & Migration Integration Tests (`./mvnw verify`):** Uses **Testcontainers** (`mysql:8.0.44`) via Maven Failsafe to verify InnoDB pessimistic row serialization, deterministic optimistic version conflicts (`CyclicBarrier`), deadlock-free reversed cart checkouts, full rollback of `event_publication` outbox records, and Flyway upgrades from legacy schemas (`InventoryConcurrencyIT`, `SchemaMigrationIT`).
+- **Frontend Suite (`cd frontend && npm test`):** Uses Vitest and React Testing Library to cover atomic cart checkout flows, Flash Rush Simulator modes, pagination race conditions, offline safeguards, and static asset publishing.
 
-```powershell
-mvn verify
-java -jar target/modulith-0.0.1-SNAPSHOT.jar
-```
-
-This Java process is owned by its terminal, not Docker. Keep the terminal visible and stop it with Ctrl+C. `mvn verify` requires Docker for isolated MySQL integration tests; those tests do not clear the developer database.
-
-## Try a short demo
-
-1. Click **Restock demo inventory** to start with the default quantities.
-2. Add two different products to the cart, check out, and inspect the returned order numbers.
-3. Open **Observability** to see persisted orders and the simulated after-commit notification feed.
-4. Restock, open **Flash Rush Simulator**, choose the flash product, and run ten pessimistic-lock requests. Restock again and compare optimistic mode. Exact optimistic outcomes depend on transaction overlap; deterministic conflicts are also covered in integration tests.
-5. Open **Architecture** for the transaction/event flow.
-
-Restocking resets stock, not orders. Stop the Docker project/group with `docker compose stop`; for an IDE/terminal app, also stop its separate Java process. Restarting the app clears the in-memory notification feed; database state remains in the named MySQL volume.
-
-## Tests
-
-GitHub Actions runs the frontend tests/build and the complete Maven verification lifecycle on pushes to `main` and pull requests. MySQL integration tests require Docker and are not silently skipped. Actions are pinned to immutable commit SHAs; Dependabot proposes weekly Maven, npm, and Actions updates for review.
-
-```powershell
-# Architecture, HTTP/transaction regressions, and real MySQL concurrency tests
-mvn verify
-
-# Frontend behavior and static-file publishing regressions
-cd frontend
-npm test
-npm run build
-```
-
-`mvn test` runs the fast tests. Maven Failsafe runs `*IT` integration tests during `mvn verify`. Tests cover whole-cart rollback, optimistic conflicts, pessimistic oversell prevention, lock ordering, restock, validation, module encapsulation, paginated history, and simulated notification labeling. Frontend tests cover checkout, errors, offline safeguards, the simulator, observability, pagination, and publishing assets safely.
-
-`GET /api/orders?page=0&size=20` returns a JSON array ordered by descending order ID, with `X-Page`, `X-Page-Size`, and `X-Has-More` headers. Page numbers start at zero; page size must be 1–100 (default 20). The UI offers Previous/Next navigation. This is live offset pagination, not a frozen audit snapshot: concurrent purchases can shift records between pages.
-
-## Read the code
+## Project Structure
 
 ```text
 src/main/java/com/portfolio/modulith/
-  ModulithApplication.java      Spring Boot entry point; async listeners enabled
-  order/                       Purchase API, transaction coordination, orders/events
-  inventory/                   Stock, locks, demo catalog, seed/reset operations
-  notification/                After-commit event consumer and recent activity feed
-frontend/src/                  React components and API client
-src/main/resources/static/     Compiled frontend served by Spring Boot
-src/test/                      Backend regression and MySQL integration tests
+├── ModulithApplication.java      # Spring Boot entry point (@EnableAsync)
+├── ApiExceptionHandler.java      # Consistent, leak-free HTTP error responses
+├── order/                        # Checkout API, transaction orchestration, OrderCreatedEvent
+├── inventory/                    # Catalog API, StockView DTO, and internal Stock JPA entity/locks
+└── notification/                 # @ApplicationModuleListener consumer and activity feed
+src/main/resources/db/migration/  # Versioned Flyway SQL migrations (V1, V2)
+frontend/src/                     # React + Tailwind storefront, Rush Simulator, Observability UI
+src/test/java/                    # ArchUnit/Modulith checks, MockMvc tests, MySQL Testcontainers ITs
 ```
 
-Start with `OrderController` -> `OrderService` -> `InventoryService`, then follow `OrderCreatedEvent` into `NotificationListener`. See `ARCHITECTURE.md` for the current data model and tradeoffs. Architecture tests generate fresh diagrams in `target/spring-modulith-docs`; checked-in `documentation/` files are snapshots, not the authoritative implementation.
+## Scope & Honest Tradeoffs
 
-## Scope and tradeoffs
+This repository is a focused architecture and concurrency demo rather than a full retail platform:
 
-This is not a production store. Product names/specifications/prices are fictional sample data. There are no payments, accounts, shipping, real email, persistent cart, or automatic purchase retries. The order model stores one product per row, while cart rows commit together. The notification feed is not a durable outbox dashboard. Real MySQL migration tests cover both fresh databases and preserved legacy data.
-
-The stock-reset APIs are unauthenticated demo controls, and CORS is permissive. Run locally; add authentication, authorization, deployment hardening, a production migration/backup policy, and request idempotency before exposing it publicly. If a purchase times out, check order history before retrying because the server may already have committed it.
+- **Simulated External Side Effects:** The notification listener simulates delivery latency (`Thread.sleep`) and pushes events to a bounded in-memory feed for the UI; no real emails are sent, and no payment gateway is attached.
+- **Demo Controls:** Endpoints like `/api/inventory/restock-all` are unauthenticated so reviewers can easily reset state during testing.
+- **Deeper Reading:** Check out [ARCHITECTURE.md](ARCHITECTURE.md) for a closer look at the transaction flow, lock tradeoffs, and database schema details.
