@@ -19,7 +19,7 @@
 
     <properties>
         <java.version>21</java.version>
-        <spring-modulith.version>2.1.2</spring-modulith.version>
+        <spring-modulith.version>2.2.0</spring-modulith.version>
     </properties>
 
     <dependencyManagement>
